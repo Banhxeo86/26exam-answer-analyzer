@@ -1353,7 +1353,7 @@
         showMsg(err && err.message ? err.message : "파일을 읽는 중 오류가 발생했습니다.", "error");
       });
     }
-    dz.addEventListener("click", function(){ fileInput.click(); });
+    dz.addEventListener("click", function(e){ if(status.contains(e.target)) return; fileInput.click(); });
     dz.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); fileInput.click(); } });
     dz.addEventListener("dragover", function(e){ e.preventDefault(); dz.style.borderColor = "var(--accent)"; });
     ["dragleave","drop"].forEach(function(evt){ dz.addEventListener(evt, function(e){ e.preventDefault(); dz.style.borderColor = ""; }); });
@@ -1557,7 +1557,7 @@
     var fileInput = el("input", {type:"file", accept:".csv,.xlsx,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", style:"display:none;"});
     var status = el("div", {});
     dz.appendChild(status);
-    dz.addEventListener("click", function(){ fileInput.click(); });
+    dz.addEventListener("click", function(e){ if(status.contains(e.target)) return; fileInput.click(); });
     dz.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" ") fileInput.click(); });
     ["dragover"].forEach(function(evt){ dz.addEventListener(evt, function(e){ e.preventDefault(); dz.style.borderColor = "var(--accent)"; }); });
     ["dragleave","drop"].forEach(function(evt){ dz.addEventListener(evt, function(e){ e.preventDefault(); dz.style.borderColor = ""; }); });
@@ -1742,7 +1742,7 @@
     var fileInput = el("input", {type:"file", accept:".csv,.xlsx,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", style:"display:none;"});
     var status = el("div", {});
     dz.appendChild(status);
-    dz.addEventListener("click", function(){ fileInput.click(); });
+    dz.addEventListener("click", function(e){ if(status.contains(e.target)) return; fileInput.click(); });
     dz.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" ") fileInput.click(); });
     ["dragover"].forEach(function(evt){ dz.addEventListener(evt, function(e){ e.preventDefault(); dz.style.borderColor = "var(--accent)"; }); });
     ["dragleave","drop"].forEach(function(evt){ dz.addEventListener(evt, function(e){ e.preventDefault(); dz.style.borderColor = ""; }); });
@@ -1986,9 +1986,13 @@
       var x = startX + i*(barW+gap);
       var y = yAt(b.value);
       var h = (padT+innerH) - y;
-      parts.push('<rect x="'+x+'" y="'+y+'" width="'+barW+'" height="'+Math.max(0,h)+'" rx="4" fill="'+b.color+'"/>');
-      parts.push('<text x="'+(x+barW/2)+'" y="'+(y-6)+'" font-size="11" font-weight="700" fill="var(--text-2)" text-anchor="middle">'+svgEsc(b.value)+'</text>');
-      parts.push('<text x="'+(x+barW/2)+'" y="'+(height-7)+'" font-size="10" fill="var(--text-3)" text-anchor="middle">'+svgEsc(b.label)+'</text>');
+      if(opts.clickable){
+        // 값이 0이어도 클릭할 수 있도록, 막대 칸 전체에 보이지 않는 클릭 영역을 깔아둡니다.
+        parts.push('<rect x="'+x+'" y="'+padT+'" width="'+barW+'" height="'+innerH+'" fill="transparent" style="cursor:pointer;" data-band-idx="'+i+'"/>');
+      }
+      parts.push('<rect x="'+x+'" y="'+y+'" width="'+barW+'" height="'+Math.max(0,h)+'" rx="4" fill="'+b.color+'" pointer-events="none"/>');
+      parts.push('<text x="'+(x+barW/2)+'" y="'+(y-6)+'" font-size="11" font-weight="700" fill="var(--text-2)" text-anchor="middle" pointer-events="none">'+svgEsc(b.value)+'</text>');
+      parts.push('<text x="'+(x+barW/2)+'" y="'+(height-7)+'" font-size="10" fill="var(--text-3)" text-anchor="middle" pointer-events="none">'+svgEsc(b.label)+'</text>');
     });
     return '<svg viewBox="0 0 '+width+' '+height+'" style="width:100%;height:auto;display:block;">'+parts.join("")+'</svg>';
   }
@@ -2086,7 +2090,13 @@
 
     function pctOf(r){ return maxTotal ? clampPct(r.score/maxTotal*100) : 0; }
     var bandCounts = [0,0,0,0,0];
-    results.forEach(function(r){ bandCounts[bandIndexOf(pctOf(r))]++; });
+    var bandMembers = [[],[],[],[],[]];
+    results.forEach(function(r){
+      var bi = bandIndexOf(pctOf(r));
+      bandCounts[bi]++;
+      bandMembers[bi].push(r);
+    });
+    bandMembers.forEach(function(list){ list.sort(function(a,b){ return b.score-a.score; }); });
 
     // achievement distribution (stacked bar + legend)
     var distCard = el("div", {class:"card"});
@@ -2116,11 +2126,37 @@
     // histogram: headcount per band (vertical column chart)
     var histCard = el("div", {class:"card"});
     histCard.appendChild(el("h2", {}, ["점수 구간별 인원"]));
-    histCard.appendChild(el("p", {class:"hint"}, ["어느 점수대에 학생이 몰려 있는지 막대 높이로 볼 수 있어요."]));
-    histCard.appendChild(el("div", {html: buildColumnChartSvg({
+    histCard.appendChild(el("p", {class:"hint"}, ["어느 점수대에 학생이 몰려 있는지 막대 높이로 볼 수 있어요. 막대를 클릭하면 해당 구간 학생 이름이 나옵니다."]));
+    var chartWrap = el("div", {html: buildColumnChartSvg({
       bars: BAND_LABELS.map(function(label,i){ return { label:label, value:bandCounts[i], color:bandColorVar(i) }; }),
-      integerTicks: true
-    })}));
+      integerTicks: true,
+      clickable: true
+    })});
+    histCard.appendChild(chartWrap);
+    var bandDetail = el("div", {class:"band-detail", style:"display:none;margin-top:12px;"});
+    histCard.appendChild(bandDetail);
+    function showBandDetail(i){
+      var members = bandMembers[i];
+      bandDetail.innerHTML = "";
+      bandDetail.style.display = "";
+      bandDetail.appendChild(el("p", {class:"hint", style:"margin:0 0 8px;"}, [
+        BAND_LABELS[i] + " · " + members.length + "명"
+      ]));
+      if(!members.length){
+        bandDetail.appendChild(el("p", {class:"empty"}, ["해당 구간에 학생이 없습니다."]));
+        return;
+      }
+      var chips = el("div", {style:"display:flex;flex-wrap:wrap;gap:6px;"});
+      members.forEach(function(r){
+        chips.appendChild(el("button", {class:"btn ghost small", type:"button", onclick:function(){ openStudentModal(r); }}, [
+          r.num + "번 " + r.name + " (" + r.score + "점)"
+        ]));
+      });
+      bandDetail.appendChild(chips);
+    }
+    chartWrap.querySelectorAll("[data-band-idx]").forEach(function(rect){
+      rect.addEventListener("click", function(){ showBandDetail(Number(rect.getAttribute("data-band-idx"))); });
+    });
     panel.appendChild(histCard);
 
     // per-student score bars (with class-average reference line)
